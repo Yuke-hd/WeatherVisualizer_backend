@@ -7,13 +7,13 @@ import org.springframework.stereotype.Component;
 @Component
 public class ForecastScore {
 	private String city;
-	private int score;
+	private double score;
 	private double std;
 
 	public ForecastScore() {
 	}
 
-	public ForecastScore(String city, int score, double std) {
+	public ForecastScore(String city, double score, double std) {
 		this.city = city;
 		this.score = score;
 		this.std = std;
@@ -27,7 +27,7 @@ public class ForecastScore {
 		this.city = city;
 	}
 
-	public int getScore() {
+	public double getScore() {
 		return score;
 	}
 

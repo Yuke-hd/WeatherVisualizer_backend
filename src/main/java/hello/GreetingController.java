@@ -13,6 +13,10 @@ import net.aksingh.owmjapis.model.DailyUVIndexForecast;
 import net.aksingh.owmjapis.model.HourlyWeatherForecast;
 import net.aksingh.owmjapis.model.param.Main;
 import net.aksingh.owmjapis.model.param.WeatherData;
+import org.apache.commons.math3.stat.descriptive.moment.StandardDeviation;
+import org.apache.commons.math3.util.MathUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Bean;
 import org.springframework.ui.ModelMap;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.ModelAndView;
@@ -31,11 +35,30 @@ public class GreetingController {
 	private static final String template = "Hello, %s!";
 	private final AtomicLong counter = new AtomicLong();
 
+	@Autowired
+	private ScanResult result1;
+
 	private String plainText = "";
 	private String cipherText = "";
 	private ArrayList<Company> companys = new ArrayList<>();
 
 	private long last = 1571195761L;
+
+	@Bean
+	public ScanResult getCity() {
+		AmazonDynamoDB client = AmazonDynamoDBClientBuilder.standard().withRegion(Regions.US_EAST_1).build();
+
+		DynamoDB dynamoDB = new DynamoDB(client);
+
+		String TableName = "50cities";
+
+
+		//QueryResult queryResult = client.query(queryRequest);
+		ScanRequest scanRequest = new ScanRequest()
+				.withTableName(TableName);
+
+		return client.scan(scanRequest);
+	}
 
 	@CrossOrigin(origins = "http://localhost:9000")
 	@GetMapping("/greeting")
@@ -83,14 +106,14 @@ public class GreetingController {
 	}
 
 	@RequestMapping(value = "/time", method = RequestMethod.GET)
-	public TextResponse time() throws APIException {
+	public TextResponse time() {
 		long currentTime = System.currentTimeMillis() / 1000L;
 		if (currentTime - last > 60L) {
 			last = currentTime;
 		}
 		String s = String.valueOf(last);
-		System.out.println(String.valueOf(last));
-		System.out.println(String.valueOf(currentTime));
+		System.out.println(last);
+		System.out.println(currentTime);
 
 		return new TextResponse(s);
 	}
@@ -103,18 +126,7 @@ public class GreetingController {
 	@RequestMapping(value = "/uvforecast/{city}", method = RequestMethod.GET)
 	public List<DailyUVIndexForecast> uvforecast(@PathVariable String city) {
 		Coordinate target = null;
-		AmazonDynamoDB client = AmazonDynamoDBClientBuilder.standard().withRegion(Regions.US_EAST_1).build();
 
-		DynamoDB dynamoDB = new DynamoDB(client);
-
-		String TableName = "50cities";
-
-
-		//QueryResult queryResult = client.query(queryRequest);
-		ScanRequest scanRequest = new ScanRequest()
-				.withTableName(TableName);
-
-		ScanResult result1 = client.scan(scanRequest);
 		for (Map<String, AttributeValue> item : result1.getItems()) {
 			if (item.get("city").toString().toUpperCase().contains(city.toUpperCase())) {
 				double lat = Double.parseDouble(String.valueOf(item.get("latitude").getN()));
@@ -130,7 +142,7 @@ public class GreetingController {
 		for (int i = 0; i < uvIndex.size(); i++) {
 			List<DailyUVIndexForecast> forecast = uvIndex.get(i);
 			for (int j = 0; j < forecast.size(); j++) {
-				if (Math.abs(forecast.get(j).getLatitude() - target.getLatitude()) < 1) {
+				if (Math.abs(forecast.get(j).getLatitude() - target.getLatitude()) < 3) {
 					result = forecast;
 				}
 			}
@@ -152,31 +164,65 @@ public class GreetingController {
 	@RequestMapping(value = "/forecastscore", method = RequestMethod.GET)
 	public ArrayList forecastScore() {
 		ArrayList<ForecastScore> result = new ArrayList<>();
+		// for each city
 		for (HourlyWeatherForecast hourlyWeatherForecast : forecastList) {
 			List<WeatherData> weatherDataList = hourlyWeatherForecast.getDataList();
 			assert weatherDataList != null;
-			double avg = 0.0;
+			List<Integer> scoreList = new ArrayList();
+			String city = hourlyWeatherForecast.getCityData().getName();
 			double humidity = 0.0;
-			double min = 0.0;
+			double min = 1000.0;
 			double max = -273.15;
+			double uvIndex = .0;
 			String rain = "";
+			List<DailyUVIndexForecast> uvforecast = uvforecast(city);
+			int count = 0;
+			Integer score = null;
+			System.out.println(city);
+			// for each forecast data in city
 			for (WeatherData weatherData : weatherDataList) {
-
 				Main mainData = weatherData.getMainData();
 				double currentMax = mainData.getTempMax();
 				double currentMin = mainData.getTempMin();
-				double currentAvg = mainData.getTemp();
 
 				max = Math.max(currentMax, max);
 				min = Math.min(currentMin, min);
-				avg += currentAvg;
 
 				humidity += mainData.getHumidity();
 
 				rain = weatherData.getWeatherList().get(0).getDescription().contains("rain") ? rain + "rain" : rain;
+				if ((count % 8 == 0 && count != 0) || count == 39) {
+					int round = Math.floorMod(count, 8);
+					uvIndex = uvforecast.get(round).getValue();
+					humidity /= 8.0;
+					System.out.println(max - 273.15);
+					System.out.println(min - 273.15);
+					System.out.println("humidity " + humidity);
+					score = calcScore(max - 273.15, min - 273.15, humidity, uvIndex, rain);
+					scoreList.add(score);
+
+					humidity = 0.0;
+					min = 1000.0;
+					max = -273.15;
+					rain = "";
+				}
+				count++;
 			}
-			Integer score = calcScore(max, min, humidity, 0.0, rain);
-			ForecastScore fs = new ForecastScore(hourlyWeatherForecast.getCityData().getName(), score, 0.0);
+			StandardDeviation scoreStd = new StandardDeviation();
+			double[] target = new double[scoreList.size()];
+			for (int i = 0; i < target.length; i++) {
+				target[i] = scoreList.get(i);
+				System.out.println(scoreList.get(i));
+			}
+			double stdiv = scoreStd.evaluate(target);
+
+			double avgScore = 0.0;
+			for (Integer s : scoreList) {
+				avgScore += s;
+			}
+			avgScore /= scoreList.size();
+
+			ForecastScore fs = new ForecastScore(city, avgScore, stdiv);
 			result.add(fs);
 		}
 		return result;
@@ -200,7 +246,7 @@ public class GreetingController {
 			} catch (Exception e) {
 
 			}
-			score = calcScore(max, min, humidity, uvindex, desc);
+			score = calcScore(max - 273.15, min - 273.15, humidity, uvindex, desc);
 			result.put(city, score);
 		}
 		return result;

@@ -4,6 +4,8 @@
     <bytecodeTargetLevel>
       <module name="complete.main" target="1.8" />
       <module name="complete.test" target="1.8" />
+      <module name="WeatherVisualizer_backend.main" target="1.8" />
+      <module name="WeatherVisualizer_backend.test" target="1.8" />
     </bytecodeTargetLevel>
   </component>
 </project>
